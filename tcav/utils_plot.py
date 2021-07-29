@@ -133,6 +133,7 @@ def plot_results(results, random_counterpart=None, random_concepts=None, num_ran
 
   # matplotlib
   fig, ax = plt.subplots()
+  fig.set_size_inches(12.5, 5.5)
     
   # draw all bottlenecks individually
   for i, [bn, vals] in enumerate(plot_data.items()):

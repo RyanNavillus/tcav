@@ -270,3 +270,115 @@ class DiscreteActivationGeneratorBase(ActivationGeneratorBase):
     """
     # By default, regurgitates input data if not implemented
     return data
+
+
+class A2CActivationGenerator(ActivationGeneratorBase):
+  """Activation generator for a basic image model"""
+
+  def __init__(self,
+               model,
+               source_dir,
+               acts_dir,
+               max_examples=10,
+               normalize_image=True):
+    """Initialize ImageActivationGenerator class."
+
+    Args:
+      normalize_image: A boolean indicating whether image pixels should be
+        normalized to between 0 and 1.
+    """
+    self.source_dir = source_dir
+    self.normalize_image = normalize_image
+    super(A2CActivationGenerator, self).__init__(model, acts_dir,
+                                                   max_examples)
+
+  def get_examples_for_concept(self, concept):
+    concept_dir = os.path.join(self.source_dir, concept)
+    img_paths = [
+        os.path.join(concept_dir, d) for d in tf.io.gfile.listdir(concept_dir)
+    ]
+    imgs = self.load_images_from_files(
+        img_paths, self.max_examples, shape=self.model.get_image_shape()[:1])
+    return imgs
+
+  def load_image_from_file(self, filename, shape):
+    """Given a filename, try to open the file.
+
+    If failed, return None.
+
+    Args:
+      filename: location of the image file
+      shape: the shape of the image file to be scaled
+
+    Returns:
+      the image if succeeds, None if fails.
+
+    Rasies:
+      exception if the image was not the right shape.
+    """
+    if not tf.io.gfile.exists(filename):
+      tf.compat.v1.logging.error('Cannot find file: {}'.format(filename))
+      return None
+    try:
+      # ensure image has no transparency channel
+      #img = np.array(PIL.Image.open(tf.io.gfile.GFile(filename, 'rb')))
+      #if self.normalize_image:
+      #  # Normalize pixel values to between 0 and 1.
+      #  img = img / 255.0
+      #if not (len(img.shape) == 3 and img.shape[2] == 3):
+      #  return None
+      #else:
+      img = np.load(filename)
+      img = np.reshape(img, (84, 84, 4))
+      return img
+
+    except Exception as e:
+      print(e)
+      tf.compat.v1.logging.info(e)
+      return None
+    return img
+
+  def load_images_from_files(self,
+                             filenames,
+                             max_imgs=500,
+                             do_shuffle=True,
+                             run_parallel=True,
+                             shape=(299, 299),
+                             num_workers=50):
+    """Return image arrays from filenames.
+
+    Args:
+      filenames: locations of image files.
+      max_imgs: maximum number of images from filenames.
+      do_shuffle: before getting max_imgs files, shuffle the names or not
+      run_parallel: get images in parallel or not
+      shape: desired shape of the image
+      num_workers: number of workers in parallelization.
+
+    Returns:
+      image arrays
+
+    """
+    imgs = []
+    # First shuffle a copy of the filenames.
+    filenames = filenames[:]
+    filenames = [name for name in filenames if "png" not in name]
+    if do_shuffle:
+      np.random.shuffle(filenames)
+
+    if run_parallel:
+      pool = multiprocessing.Pool(num_workers)
+      imgs = pool.map(
+          lambda filename: self.load_image_from_file(filename, shape),
+          filenames[:max_imgs])
+      pool.close()
+      imgs = [img for img in imgs if img is not None]
+      if len(imgs) <= 1:
+        raise ValueError(
+            'You must have more than 1 image in each class to run TCAV.')
+    else:
+      for filename in filenames:
+        img = self.load_image_from_file(filename, shape)
+
+    return np.array(imgs)
+

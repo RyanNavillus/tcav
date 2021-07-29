@@ -24,6 +24,7 @@ import six
 import tensorflow as tf
 from google.protobuf import text_format
 
+
 class ModelWrapper(six.with_metaclass(ABCMeta, object)):
   """Simple wrapper of the for models with session object for TCAV.
 
@@ -293,15 +294,17 @@ class PublicImageModelWrapper(ImageModelWrapper):
     graph = tf.compat.v1.get_default_graph()
     bn_endpoints = {}
     for op in graph.get_operations():
-      if op.name.startswith(scope + '/') and 'Concat' in op.type:
-        name = op.name.split('/')[1]
+      if op.name.startswith(scope + 'train_model/') and 'Add' in op.type:
+        name = op.name.split('/')[2]
         bn_endpoints[name] = op.outputs[0]
+    print(bn_endpoints)
     return bn_endpoints
 
   # Load graph and import into graph used by our session
   @staticmethod
   def import_graph(saved_path, endpoints, image_value_range, scope='import'):
-    t_input = tf.compat.v1.placeholder(np.float32, [None, None, None, 3])
+    t_input = tf.compat.v1.placeholder(np.uint8, [None, None, None, 4])
+    #t_input = tf.compat.v1.placeholder(np.float32, [None, None, None, 3])
     graph = tf.Graph()
     assert graph.unique_name(scope, False) == scope, (
         'Scope "%s" already exists. Provide explicit scope names when '
@@ -316,6 +319,10 @@ class PublicImageModelWrapper(ImageModelWrapper):
 
       graph_inputs = {}
       graph_inputs[endpoints['input']] = t_prep_input
+      names = [n.name for n in graph_def.node]
+      # Uncomment to list tensor names
+      #for name in names:
+      #    print(name)
       myendpoints = tf.import_graph_def(
           graph_def, graph_inputs, list(endpoints.values()), name=sc)
       myendpoints = dict(list(zip(list(endpoints.keys()), myendpoints)))
@@ -473,3 +480,140 @@ class KerasModelWrapper(ModelWrapper):
   def get_inputs_and_outputs_and_ends(self):
     self.ends['input'] = self.model.inputs[0]
     self.ends['prediction'] = self.model.outputs[0]
+
+class A2C2Wrapper_public(PublicImageModelWrapper):
+  def __init__(self, sess, model_saved_path, labels_path):
+    self.image_value_range = (-1, 1)
+    image_shape_v3 = [1, 84, 84, 4]
+    endpoints_v3 = dict(
+        input='train_model/input/Ob',
+        prediction='train_model/model/pi/add:0',
+    )
+
+    self.sess = sess
+    super(A2C2Wrapper_public, self).__init__(
+        sess,
+        model_saved_path,
+        labels_path,
+        image_shape_v3,
+        endpoints_v3,
+        scope='')
+    self.model_name = 'A2C_public'
+
+
+class A2CWrapper_public(PublicImageModelWrapper):
+  def __init__(self, sess, model_saved_path, labels_path, node_dict=None):
+    """Initialize the wrapper.
+
+    Optionally create a session, load
+    the model from model_path to this session, and map the
+    input/output and bottleneck tensors.
+
+    Args:
+      model_path: one of the following: 1) Directory path to checkpoint 2)
+        Directory path to SavedModel 3) File path to frozen graph.pb 4) File
+        path to frozen graph.pbtxt
+      node_dict: mapping from a short name to full input/output and bottleneck
+        tensor names. Users should pass 'input' and 'prediction'
+        as keys and the corresponding input and prediction tensor
+        names as values in node_dict. Users can additionally pass bottleneck
+        tensor names for which gradient Ops will be added later.
+    """
+    # A dictionary of bottleneck tensors.
+    self.bottlenecks_tensors = None
+    # A dictionary of input, 'logit' and prediction tensors.
+    self.ends = None
+    # The model name string.
+    self.model_name = None
+    # a place holder for index of the neuron/class of interest.
+    # usually defined under the graph. For example:
+    # with g.as_default():
+    #   self.tf.placeholder(tf.int64, shape=[None])
+    self.y_input = None
+    # The tensor representing the loss (used to calculate derivative).
+    self.loss = None
+    # If tensors in the loaded graph are prefixed with 'import/'
+    self.import_prefix = False
+
+    if model_saved_path:
+      self._try_loading_model(model_saved_path)
+    if node_dict:
+      self._find_ends_and_bottleneck_tensors(node_dict)
+
+    self.image_value_range = (-1, 1)
+    image_shape = [84, 84, 3]
+    endpoints_dict = dict(
+        input='Mul:0',
+        logit='softmax/logits:0',
+        prediction='softmax:0',
+        pre_avgpool='mixed_10/join:0',
+        logit_weight='softmax/weights:0',
+        logit_bias='softmax/biases:0',
+    )
+    self.sess = sess
+    super(ModelWrapper, self).__init__()
+    scope = 'v3'
+   # # shape of the input image in this model
+    self.image_shape = image_shape
+    self.labels = tf.io.gfile.GFile(labels_path).read().splitlines()
+   # self.ends = PublicImageModelWrapper.import_graph(
+   #     model_saved_path, endpoints_dict, self.image_value_range, scope=scope)
+    self.bottlenecks_tensors = PublicImageModelWrapper.get_bottleneck_tensors(
+        scope)
+    graph = tf.compat.v1.get_default_graph()
+
+    # Construct gradient ops.
+    with graph.as_default():
+      self.y_input = tf.compat.v1.placeholder(tf.int64, shape=[None])
+
+      self.pred = tf.expand_dims(self.ends['prediction'][0], 0)
+      self.loss = tf.reduce_mean(
+          input_tensor=tf.compat.v1.nn.softmax_cross_entropy_with_logits_v2(
+              labels=tf.one_hot(
+                  self.y_input,
+                  self.ends['prediction'].get_shape().as_list()[1]),
+              logits=self.pred))
+    self._make_gradient_tensors()
+    self.model_name = 'InceptionV3_public'
+
+  def _try_loading_model(self, model_path):
+    """ Load model from model_path.
+
+    TF models are often saved in one of the three major formats:
+      1) Checkpoints with ckpt.meta, ckpt.data, and ckpt.index.
+      2) SavedModel format with saved_model.pb and variables/.
+      3) Frozen graph in .pb or .pbtxt format.
+    When model_path is specified, model is loaded in one of the
+    three formats depending on the model_path. When model_path is
+    ommitted, child wrapper is responsible for loading the model.
+    """
+    try:
+      self.sess = tf.compat.v1.Session(graph=tf.Graph())
+      with self.sess.graph.as_default():
+        if tf.io.gfile.isdir(model_path):
+          ckpt = tf.train.latest_checkpoint(model_path)
+          if ckpt:
+            tf.compat.v1.logging.info('Loading from the latest checkpoint.')
+            saver = tf.compat.v1.train.import_meta_graph(ckpt + '.meta')
+            saver.restore(self.sess, ckpt)
+          else:
+            tf.compat.v1.logging.info('Loading from SavedModel dir.')
+            tf.compat.v1.saved_model.loader.load(self.sess, ['serve'], model_path)
+        else:
+          input_graph_def = tf.compat.v1.GraphDef()
+          if model_path.endswith('.pb'):
+            tf.compat.v1.logging.info('Loading from frozen binary graph.')
+            with tf.io.gfile.GFile(model_path, 'rb') as f:
+              input_graph_def.ParseFromString(f.read())
+          else:
+            tf.compat.v1.logging.info('Loading from frozen text graph.')
+            with tf.io.gfile.GFile(model_path) as f:
+              text_format.Parse(f.read(), input_graph_def)
+          tf.import_graph_def(input_graph_def)
+          self.import_prefix = True
+
+    except Exception as e:
+      template = 'An exception of type {0} occurred ' \
+                 'when trying to load model from {1}. ' \
+                 'Arguments:\n{2!r}'
+      tf.compat.v1.logging.warn(template.format(type(e).__name__, model_path, e.args))
