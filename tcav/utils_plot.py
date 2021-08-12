@@ -82,7 +82,16 @@ def plot_results(results, random_counterpart=None, random_concepts=None, num_ran
   plot_concepts = []
     
   # print concepts and classes with indentation
+  new_concepts = [0] * 3
   for concept in result_summary:
+      if concept == "behind_left_bunker":
+          new_concepts[0] = concept
+      if concept == "behind_center_bunker":
+          new_concepts[1] = concept
+      if concept == "behind_right_bunker":
+          new_concepts[2] = concept
+
+  for concept in new_concepts:
         
     # if not random
     if not is_random_concept(concept):

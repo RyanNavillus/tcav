@@ -208,7 +208,7 @@ class TCAV(object):
     """
     # for random exp,  a machine with cpu = 30, ram = 300G, disk = 10G and
     # pool worker 50 seems to work.
-    tf.compat.v1.logging.info('running %s params' % len(self.params))
+    #tf.compat.v1.logging.info('running %s params' % len(self.params))
     results = []
     now = time.time()
     if run_parallel:
@@ -392,8 +392,8 @@ class TCAV(object):
     for bottleneck in self.bottlenecks:
       for target_in_test, concepts_in_test in self.pairs_to_test:
         for alpha in self.alphas:
-          tf.compat.v1.logging.info('%s %s %s %s', bottleneck, concepts_in_test,
-                          target_in_test, alpha)
+          #tf.compat.v1.logging.info('%s %s %s %s', bottleneck, concepts_in_test,
+          #                target_in_test, alpha)
           params.append(
               run_params.RunParams(bottleneck, concepts_in_test, target_in_test,
                                    self.activation_generator, self.cav_dir,

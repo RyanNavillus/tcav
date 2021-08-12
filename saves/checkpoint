@@ -1,3 +1,2 @@
-model_checkpoint_path: "please.ckpt"
-all_model_checkpoint_paths: "../test"
-all_model_checkpoint_paths: "please.ckpt"
+model_checkpoint_path: "squared_flip_agent_42.ckpt"
+all_model_checkpoint_paths: "squared_flip_agent_42.ckpt"

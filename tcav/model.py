@@ -321,8 +321,8 @@ class PublicImageModelWrapper(ImageModelWrapper):
       graph_inputs[endpoints['input']] = t_prep_input
       names = [n.name for n in graph_def.node]
       # Uncomment to list tensor names
-      #for name in names:
-      #    print(name)
+      for name in names:
+          print(name)
       myendpoints = tf.import_graph_def(
           graph_def, graph_inputs, list(endpoints.values()), name=sc)
       myendpoints = dict(list(zip(list(endpoints.keys()), myendpoints)))
